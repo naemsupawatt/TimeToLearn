@@ -1,26 +1,23 @@
 {
-  "name": "time-to-learn",
+  "name": "robolearn-ai",
   "version": "0.1.0",
   "private": true,
+  "description": "RoboLearn AI - Intelligent Robotics Learning Platform (Express API + Next.js web)",
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "next": "16.4.6",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "dev": "concurrently -k -n server,web -c blue,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w server && npm run build -w web",
+    "start": "concurrently -k -n server,web -c blue,magenta \"npm run start -w server\" \"npm run start -w web\"",
+    "setup": "npm run db:setup -w server",
+    "db:reset": "npm run db:reset -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "lint": "npm run lint -w web",
+    "test": "npm run test -w server"
   },
   "devDependencies": {
-    "@tailwindcss/turbopack": "4.3.3",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.4.6",
-    "tailwindcss": "4.3.3",
-    "typescript": "^5"
+    "concurrently": "^9.2.0"
   }
 }

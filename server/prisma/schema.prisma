@@ -1,0 +1,354 @@
+// RoboLearn AI - database schema (SQLite + Prisma)
+//
+// Notes
+// - "Enum-like" fields are stored as String and validated with zod in the API
+//   layer (see src/lib/constants.ts) so the schema stays portable to Postgres.
+// - JSON payloads are stored as String (serialized JSON) and parsed in the API.
+// - Every child row cascades on delete so "delete classroom / student / photo"
+//   really removes the data (privacy requirement).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model School {
+  id         String      @id @default(cuid())
+  name       String
+  address    String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  users      User[]
+  classrooms Classroom[]
+}
+
+/// Administrators and teachers. Student groups log in with a Group PIN instead.
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  name          String
+  role          String // ADMIN | TEACHER
+  active        Boolean        @default(true)
+  schoolId      String?
+  school        School?        @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  classrooms    Classroom[]
+  lessons       Lesson[]
+  rubrics       Rubric[]
+  assessments   Assessment[]
+  notifications Notification[]
+
+  @@index([role])
+}
+
+model Classroom {
+  id          String             @id @default(cuid())
+  name        String
+  gradeLevel  String
+  description String?
+  /// Seeded sample data. Kept separate from real results everywhere (e.g. Innovation Showcase).
+  isDemo      Boolean            @default(false)
+  teacherId   String
+  teacher     User               @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  schoolId    String?
+  school      School?            @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  rubricId    String?
+  rubric      Rubric?            @relation(fields: [rubricId], references: [id], onDelete: SetNull)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  students    Student[]
+  groups      Group[]
+  sessions    ClassroomSession[]
+
+  @@index([teacherId])
+}
+
+model Student {
+  id          String        @id @default(cuid())
+  classroomId String
+  classroom   Classroom     @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  studentNo   String
+  firstName   String
+  lastName    String
+  nickname    String?
+  createdAt   DateTime      @default(now())
+  membership  GroupMember?
+  assessments Assessment[]
+
+  @@unique([classroomId, studentNo])
+}
+
+model Group {
+  id            String          @id @default(cuid())
+  classroomId   String
+  classroom     Classroom       @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  name          String
+  color         String          @default("blue")
+  /// 6-digit PIN used by the group's iPad to join the classroom.
+  pin           String          @unique
+  createdAt     DateTime        @default(now())
+  members       GroupMember[]
+  progress      GroupProgress[]
+  submissions   Submission[]
+  helpRequests  HelpRequest[]
+  notifications Notification[]
+  analytics     LearningAnalytics[]
+
+  @@index([classroomId])
+}
+
+model GroupMember {
+  id        String  @id @default(cuid())
+  groupId   String
+  group     Group   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// A student belongs to at most one group.
+  studentId String  @unique
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  role      String? // e.g. Leader, Builder, Coder, Tester
+}
+
+model Lesson {
+  id                  String             @id @default(cuid())
+  teacherId           String
+  teacher             User               @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  unitName            String
+  title               String
+  objectives          String             @default("[]") // JSON string[]
+  durationMinutes     Int                @default(60)
+  difficulty          String             @default("EASY") // EASY | MEDIUM | HARD
+  materials           String             @default("[]") // JSON string[]
+  coverImageUrl       String?
+  videoUrl            String?
+  prototypeImageUrl   String?
+  sampleCode          String?
+  reflectionQuestions String             @default("[]") // JSON string[]
+  status              String             @default("DRAFT") // DRAFT | PUBLISHED
+  isDemo              Boolean            @default(false)
+  rubricId            String?
+  rubric              Rubric?            @relation(fields: [rubricId], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  steps               LessonStep[]
+  missions            Mission[]
+  sessions            ClassroomSession[]
+
+  @@index([teacherId])
+}
+
+model LessonStep {
+  id        String  @id @default(cuid())
+  lessonId  String
+  lesson    Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  order     Int
+  /// MISSION | THINK | BUILD | CODING | TEST | IMPROVE | REFLECTION
+  phase     String
+  title     String
+  content   String  @default("")
+  imageUrl  String?
+  videoUrl  String?
+  /// JSON: { type: "none" } | { type: "checklist", items: string[] } | { type: "question", prompt: string }
+  activity  String  @default("{\"type\":\"none\"}")
+
+  @@index([lessonId, order])
+}
+
+model Mission {
+  id              String       @id @default(cuid())
+  lessonId        String
+  lesson          Lesson       @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  order           Int          @default(0)
+  title           String
+  description     String
+  successCriteria String       @default("[]") // JSON string[]
+  submissions     Submission[]
+}
+
+model ClassroomSession {
+  id           String              @id @default(cuid())
+  classroomId  String
+  classroom    Classroom           @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  lessonId     String
+  lesson       Lesson              @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  status       String              @default("ACTIVE") // ACTIVE | ENDED
+  startedAt    DateTime            @default(now())
+  endedAt      DateTime?
+  progress     GroupProgress[]
+  submissions  Submission[]
+  helpRequests HelpRequest[]
+  assessments  Assessment[]
+  analytics    LearningAnalytics[]
+
+  @@index([classroomId, status])
+}
+
+model GroupProgress {
+  id               String           @id @default(cuid())
+  sessionId        String
+  session          ClassroomSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  groupId          String
+  group            Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  currentStepIndex Int              @default(0)
+  completedSteps   String           @default("[]") // JSON number[] (step indexes)
+  stepAnswers      String           @default("{}") // JSON { [stepId]: { checked?: boolean[], answer?: string } }
+  /// NOT_STARTED | LEARNING | WAITING_REVIEW | NEED_HELP | COMPLETED
+  status           String           @default("NOT_STARTED")
+  startedAt        DateTime?
+  completedAt      DateTime?
+  lastActivityAt   DateTime         @default(now())
+
+  @@unique([sessionId, groupId])
+}
+
+model Submission {
+  id              String           @id @default(cuid())
+  sessionId       String
+  session         ClassroomSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  groupId         String
+  group           Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  missionId       String?
+  mission         Mission?         @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  imageUrl        String
+  note            String?
+  attempt         Int              @default(1)
+  /// SUBMITTED | APPROVED | NEEDS_WORK
+  status          String           @default("SUBMITTED")
+  teacherFeedback String?
+  createdAt       DateTime         @default(now())
+  reviewedAt      DateTime?
+  analysis        AIAnalysis?
+
+  @@index([sessionId, groupId])
+}
+
+model AIAnalysis {
+  id           String     @id @default(cuid())
+  submissionId String     @unique
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  provider     String // openai | gemini | demo
+  model        String
+  /// true when no API key is configured and the result is simulated.
+  isDemo       Boolean    @default(false)
+  /// JSON: { summary, strengths[], possibleIssues[], missingParts[], suggestions[], thinkingQuestions[], limitations[], needsBetterPhoto }
+  result       String
+  error        String?
+  createdAt    DateTime   @default(now())
+}
+
+model HelpRequest {
+  id          String           @id @default(cuid())
+  sessionId   String
+  session     ClassroomSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  groupId     String
+  group       Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// BUILD | CODING | EQUIPMENT | MISSION | OTHER
+  category    String
+  message     String?
+  status      String           @default("OPEN") // OPEN | ACKNOWLEDGED | RESOLVED
+  teacherReply String?
+  createdAt   DateTime         @default(now())
+  resolvedAt  DateTime?
+
+  @@index([sessionId, status])
+}
+
+model Rubric {
+  id          String            @id @default(cuid())
+  teacherId   String
+  teacher     User              @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  name        String
+  isDefault   Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  criteria    RubricCriterion[]
+  lessons     Lesson[]
+  classrooms  Classroom[]
+  assessments Assessment[]
+}
+
+model RubricCriterion {
+  id          String @id @default(cuid())
+  rubricId    String
+  rubric      Rubric @relation(fields: [rubricId], references: [id], onDelete: Cascade)
+  name        String
+  description String @default("")
+  maxScore    Int    @default(4)
+  /// Relative weight in percent. Weights of a rubric should sum to 100.
+  weight      Float  @default(1)
+  order       Int    @default(0)
+}
+
+/// Individual assessment of one student for one classroom session.
+model Assessment {
+  id            String           @id @default(cuid())
+  studentId     String
+  student       Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sessionId     String
+  session       ClassroomSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  rubricId      String
+  rubric        Rubric           @relation(fields: [rubricId], references: [id], onDelete: Cascade)
+  scores        String           @default("{}") // JSON { [criterionId]: number }
+  /// Weighted percentage 0-100, computed by the server.
+  totalPercent  Float            @default(0)
+  comment       String?
+  /// AI observations shown to the teacher. Never used as the final score.
+  aiObservation String?
+  status        String           @default("DRAFT") // DRAFT | CONFIRMED
+  assessedById  String
+  assessedBy    User             @relation(fields: [assessedById], references: [id], onDelete: Cascade)
+  confirmedAt   DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([studentId, sessionId])
+}
+
+/// Teacher notifications (help requests, submissions) and teacher -> group messages.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String?
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groupId   String?
+  group     Group?    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// HELP_REQUEST | SUBMISSION | TEACHER_MESSAGE | SYSTEM
+  type      String
+  title     String
+  body      String    @default("")
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([groupId])
+}
+
+/// Append-only learning event log used for Learning Analytics.
+model LearningAnalytics {
+  id          String           @id @default(cuid())
+  sessionId   String
+  session     ClassroomSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  groupId     String
+  group       Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// SESSION_JOIN | STEP_COMPLETED | SUBMISSION | AI_ANALYSIS | AI_CHAT | HELP_REQUEST | MISSION_COMPLETED
+  type        String
+  stepIndex   Int?
+  phase       String?
+  durationSec Int?
+  data        String           @default("{}")
+  createdAt   DateTime         @default(now())
+
+  @@index([sessionId, groupId, type])
+}
+
+/// Key/value system settings (AI provider, model, limits, showcase evaluation).
+/// API keys are NEVER stored here - only in server/.env.
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
